@@ -1,274 +1,256 @@
-import React, { useState } from 'react'
+import React, { useState } from "react"
 import {
+  generateRSAKeyPair_alcaldia,
+  exportPublicKeyToPEM,
+  exportPrivateKeyToPEM,
   importRSAPrivateKeyFromPEM,
-  importRSAPublicKeyFromPEM,
-} from './utilidades/crypto'
+  importRSAPublicKeyFromPEM
+} from "./utilidades/crypto"
+
+import { openPackage } from "./utilidades/receiver"
 
 export default function ReceptorAlcaldia() {
-  const [privateKey, setPrivateKey] = useState(null)
-  const [senderPublicKey, setSenderPublicKey] = useState(null)
-  const [result, setResult] = useState(null)
-  const [restoredFile, setRestoredFile] = useState(null)
+  const [alcaldiaKeys, setAlcaldiaKeys] = useState(null)
+  const [privateKeyLoaded, setPrivateKeyLoaded] = useState(false)
+  const [userPublicKey, setUserPublicKey] = useState(null)
+
+  const [publicPem, setPublicPem] = useState("")
+  const [privatePem, setPrivatePem] = useState("")
+
+  const [encryptedFile, setEncryptedFile] = useState(null)
+  const [originalBuffer, setOriginalBuffer] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
 
-  async function handleLoadPrivateKey(e) {
-    const pem = e.target.value
-    if (pem.trim()) {
-      try {
-        const key = await importRSAPrivateKeyFromPEM(pem)
-        setPrivateKey(key)
-        e.target.classList.remove('border-red-300')
-        e.target.classList.add('border-green-500')
-      } catch (error) {
-        e.target.classList.add('border-red-300')
-        console.error('Error cargando clave privada:', error)
-      }
-    }
-  }
-
-  async function handleLoadSenderPublicKey(e) {
-    const pem = e.target.value
-    if (pem.trim()) {
-      try {
-        const key = await importRSAPublicKeyFromPEM(pem)
-        setSenderPublicKey(key)
-        e.target.classList.remove('border-red-300')
-        e.target.classList.add('border-green-500')
-      } catch (error) {
-        e.target.classList.add('border-red-300')
-        console.error('Error cargando clave pública:', error)
-      }
-    }
-  }
-
-  async function handleLoadEncryptedFile(e) {
-    const file = e.target.files[0]
-    if (!file) return
-
-    if (!privateKey || !senderPublicKey) {
-      setResult('❌ Primero carga ambas claves')
-      return
-    }
-
+  // ---------------------------------------------------
+  // GENERAR CLAVES ALCALDÍA
+  // ---------------------------------------------------
+  async function generateKeys() {
     setIsLoading(true)
-    setResult(null)
 
     try {
-      const text = await file.text()
-      const pkg = JSON.parse(text)
+      const kp = await generateRSAKeyPair_alcaldia()
 
-      const iv = new Uint8Array(pkg.iv)
-      const encryptedAES = new Uint8Array(pkg.encryptedAES)
-      const encryptedFile = new Uint8Array(pkg.encryptedFile)
-      const signature = new Uint8Array(pkg.signature)
+      setAlcaldiaKeys(kp)
 
-      // 1. Descifrar la clave AES con clave privada RSA
-      const rawAesKey = await crypto.subtle.decrypt(
-        { name: 'RSA-OAEP' },
-        privateKey,
-        encryptedAES
-      )
+      const publicOut = await exportPublicKeyToPEM(kp.publicKey)
+      const privateOut = await exportPrivateKeyToPEM(kp.privateKey)
 
-      const aesKey = await crypto.subtle.importKey(
-        'raw',
-        rawAesKey,
-        'AES-GCM',
-        false,
-        ['decrypt']
-      )
+      setPublicPem(publicOut)
+      setPrivatePem(privateOut)
 
-      // 2. Descifrar archivo
-      const decryptedFile = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        aesKey,
-        encryptedFile
-      )
-
-      // 3. Verificar firma
-      const validSignature = await crypto.subtle.verify(
-        {
-          name: 'RSASSA-PKCS1-v1_5',
-        },
-        senderPublicKey,
-        signature,
-        decryptedFile
-      )
-
-      setResult(validSignature ? 'Firma válida ✔' : 'Firma NO válida ❌')
-      setRestoredFile(new Blob([decryptedFile], { type: 'application/pdf' }))
-    } catch (err) {
-      setResult('❌ Error al descifrar el archivo')
-      console.error(err)
+      alert("Claves generadas correctamente.")
+    } catch (e) {
+      console.error(e)
+      alert("Error generando claves.")
     } finally {
       setIsLoading(false)
     }
   }
 
-  function downloadRestored() {
-    const url = URL.createObjectURL(restoredFile)
-    const a = document.createElement('a')
+  // ---------------------------------------------------
+  // DESCARGA DE ARCHIVOS PEM
+  // ---------------------------------------------------
+  function downloadPem(filename, content) {
+    const blob = new Blob([content], { type: "application/x-pem-file" })
+    const url = URL.createObjectURL(blob)
+
+    const a = document.createElement("a")
     a.href = url
-    a.download = 'documento-restaurado.pdf'
+    a.download = filename
     a.click()
+
     URL.revokeObjectURL(url)
   }
 
-  const allKeysLoaded = privateKey && senderPublicKey
+  // ---------------------------------------------------
+  // CARGAR CLAVE PRIVADA ALCALDÍA
+  // ---------------------------------------------------
+  async function loadPrivateKeyFromFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
 
+    const text = await file.text()
+
+    try {
+      const priv = await importRSAPrivateKeyFromPEM(text)
+      setAlcaldiaKeys((prev) => ({ ...prev, privateKey: priv }))
+      setPrivateKeyLoaded(true)
+      alert("Clave privada cargada correctamente.")
+    } catch (err) {
+      console.error(err)
+      alert("❌ Error leyendo clave privada")
+    }
+  }
+
+  // ---------------------------------------------------
+  // CARGAR CLAVE PÚBLICA DEL USUARIO (para validar firma)
+  // ---------------------------------------------------
+  async function loadUserPublicKeyFile(e) {
+    const file = e.target.files[0]
+    if (!file) return
+
+    const text = await file.text()
+
+    try {
+      const pub = await importRSAPublicKeyFromPEM(text)
+      setUserPublicKey(pub)
+      alert("Clave pública del usuario cargada.")
+    } catch (err) {
+      console.error(err)
+      alert("❌ Error cargando clave del usuario")
+    }
+  }
+
+  // ---------------------------------------------------
+  // DESCIFRAR ARCHIVO .enc
+async function handleDecrypt() {
+  if (!encryptedFile || !alcaldiaKeys?.privateKey) {
+    alert("Falta archivo o clave privada.");
+    return;
+  }
+
+  setIsLoading(true);
+
+  try {
+    // 1. Leer JSON del archivo .enc
+    const text = await encryptedFile.text();
+    const pkg = JSON.parse(text);
+
+    // 2. Llamar a openPackage con el JSON (NO archivo)
+    const { fileBuffer, valid } = await openPackage(
+      pkg,
+      alcaldiaKeys.privateKey
+    );
+
+    // 3. Guardar resultado en el estado
+    setOriginalBuffer(fileBuffer);
+
+    // 4. Notificación
+    alert(
+      valid
+        ? "Documento descifrado y firma válida 🎉"
+        : "Documento descifrado, pero firma NO válida ⚠️"
+    );
+  } catch (e) {
+    console.error(e);
+    alert("❌ Error descifrando. Verifique archivo y claves.");
+  } finally {
+    setIsLoading(false);
+  }
+}
+
+
+
+  // ---------------------------------------------------
+  // DESCARGAR DOCUMENTO ORIGINAL
+  // ---------------------------------------------------
+  function downloadOriginal() {
+    if (!originalBuffer) return
+
+    const blob = new Blob([originalBuffer])
+    const url = URL.createObjectURL(blob)
+
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "documento_descifrado"
+    a.click()
+
+    URL.revokeObjectURL(url)
+  }
+
+  // ---------------------------------------------------
+  // UI
+  // ---------------------------------------------------
   return (
-    <div className='max-w-2xl mx-auto space-y-6'>
-      {/* Header */}
-      <div className='text-center space-y-2'>
-        <div className='w-12 h-12 bg-gradient-to-r from-emerald-500 to-green-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg'>
-          <span className='text-white text-xl'>🏛️</span>
+    <div className="max-w-2xl mx-auto space-y-8">
+
+      <div className="text-center space-y-2">
+        <div className="w-12 h-12 bg-blue-600 text-white flex items-center justify-center mx-auto rounded-xl">
+          🏛️
         </div>
-        <h2 className='text-2xl font-bold text-gray-800'>
-          Receptor - Alcaldía
-        </h2>
-        <p className='text-gray-600'>
-          Descifra y verifica documentos firmados digitalmente
-        </p>
+        <h2 className="text-3xl font-bold">Receptor - Alcaldía</h2>
+        <p className="text-gray-600">Descifra y verifica documentos enviados por los ciudadanos</p>
       </div>
 
-      <div className='space-y-6'>
-        {/* Clave privada de la Alcaldía */}
-        <div className='space-y-2'>
-          <label className='block text-sm font-medium text-gray-700'>
-            Clave Privada de la Alcaldía
-          </label>
-          <textarea
-            className='w-full h-32 px-4 py-3 border-2 border-gray-200 rounded-xl 
-                       focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 
-                       transition-all duration-200 resize-none font-mono text-sm
-                       placeholder-gray-400'
-            placeholder='-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...'
-            onBlur={handleLoadPrivateKey}
-          />
-          {privateKey && (
-            <div className='flex items-center gap-2 text-sm text-green-600'>
-              <div className='w-2 h-2 bg-green-500 rounded-full'></div>
-              Clave privada cargada correctamente
-            </div>
-          )}
-        </div>
+      {/* GENERAR CLAVES */}
+      <button
+        onClick={generateKeys}
+        disabled={isLoading}
+        className="w-full py-4 bg-blue-600 text-white font-semibold rounded-xl"
+      >
+        {isLoading ? "Generando..." : "🔑 Generar Claves de la Alcaldía"}
+      </button>
 
-        {/* Clave pública del remitente */}
-        <div className='space-y-2'>
-          <label className='block text-sm font-medium text-gray-700'>
-            Clave Pública del Ciudadano
-          </label>
-          <textarea
-            className='w-full h-24 px-4 py-3 border-2 border-gray-200 rounded-xl 
-                       focus:ring-2 focus:ring-blue-500 focus:border-blue-500 
-                       transition-all duration-200 resize-none font-mono text-sm
-                       placeholder-gray-400'
-            placeholder='-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...'
-            onBlur={handleLoadSenderPublicKey}
-          />
-          {senderPublicKey && (
-            <div className='flex items-center gap-2 text-sm text-green-600'>
-              <div className='w-2 h-2 bg-green-500 rounded-full'></div>
-              Clave pública cargada correctamente
-            </div>
-          )}
-        </div>
-
-        {/* Upload de archivo */}
-        <div className='space-y-2'>
-          <label className='block text-sm font-medium text-gray-700'>
-            Archivo Cifrado
-          </label>
-          <div className='relative'>
-            <input
-              type='file'
-              className='w-full px-4 py-4 border-2 border-dashed border-gray-300 
-                         rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 
-                         transition-all duration-200 file:mr-4 file:py-2 file:px-4 
-                         file:rounded-lg file:border-0 file:text-sm file:font-semibold
-                         file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100
-                         cursor-pointer'
-              onChange={handleLoadEncryptedFile}
-              accept='.json,.txt'
-              disabled={!allKeysLoaded || isLoading}
-            />
-            {!allKeysLoaded && (
-              <div className='absolute inset-0 bg-white/80 rounded-xl flex items-center justify-center'>
-                <p className='text-sm text-gray-500'>
-                  Carga ambas claves primero
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Estado de carga */}
-        {isLoading && (
-          <div className='flex justify-center'>
-            <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600'></div>
-          </div>
-        )}
-
-        {/* Resultado */}
-        {result && (
-          <div
-            className={`p-4 rounded-xl text-center font-semibold text-lg ${
-              result.includes('válida ✔')
-                ? 'bg-green-50 text-green-700 border border-green-200'
-                : 'bg-red-50 text-red-700 border border-red-200'
-            }`}
-          >
-            {result}
-          </div>
-        )}
-
-        {/* Botón de descarga */}
-        {restoredFile && (
+      {/* DESCARGAR CLAVES */}
+      {publicPem && (
+        <div className="space-y-3">
           <button
-            onClick={downloadRestored}
-            className='w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 
-                     text-white font-semibold rounded-xl shadow-lg hover:shadow-xl 
-                     transform hover:scale-105 transition-all duration-200 
-                     focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2'
+            onClick={() => downloadPem("alcaldia_public.pem", publicPem)}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg w-full"
           >
-            📥 Descargar Documento Restaurado
+            📤 Descargar clave pública de la alcaldía
           </button>
-        )}
+
+          <button
+            onClick={() => downloadPem("alcaldia_private.pem", privatePem)}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg w-full"
+          >
+            🔒 Descargar clave privada (respaldo)
+          </button>
+        </div>
+      )}
+
+      {/* CARGAR CLAVE PRIVADA */}
+      <div className="space-y-2">
+        <p className="font-semibold">Cargar clave privada de la Alcaldía:</p>
+        <input
+          type="file"
+          accept=".pem"
+          onChange={loadPrivateKeyFromFile}
+          className="w-full p-3 border rounded-xl"
+        />
       </div>
 
-      {/* Indicador de estado */}
-      <div className='flex items-center justify-between text-sm text-gray-500 pt-4 border-t'>
-        <div className='flex items-center gap-4'>
-          <div
-            className={`flex items-center gap-1 ${
-              privateKey ? 'text-green-600' : ''
-            }`}
-          >
-            <div
-              className={`w-2 h-2 rounded-full ${
-                privateKey ? 'bg-green-500' : 'bg-gray-300'
-              }`}
-            ></div>
-            Clave privada
-          </div>
-          <div
-            className={`flex items-center gap-1 ${
-              senderPublicKey ? 'text-green-600' : ''
-            }`}
-          >
-            <div
-              className={`w-2 h-2 rounded-full ${
-                senderPublicKey ? 'bg-green-500' : 'bg-gray-300'
-              }`}
-            ></div>
-            Clave pública
-          </div>
-        </div>
-        <div className='text-xs bg-gray-100 px-2 py-1 rounded'>
-          Listo para descifrar
-        </div>
+      {/* CARGAR CLAVE PÚBLICA DEL USUARIO */}
+      <div className="space-y-2">
+        <p className="font-semibold">Cargar clave pública del usuario:</p>
+        <input
+          type="file"
+          accept=".pem"
+          onChange={loadUserPublicKeyFile}
+          className="w-full p-3 border rounded-xl"
+        />
       </div>
+
+      {/* CARGAR ARCHIVO CIFRADO */}
+      <div className="space-y-2">
+        <p className="font-semibold">Documento cifrado (.enc):</p>
+        <input
+          type="file"
+          accept=".enc"
+          onChange={(e) => setEncryptedFile(e.target.files[0])}
+          className="w-full p-3 border rounded-xl"
+        />
+      </div>
+
+      {/* DESCIFRAR */}
+      <button
+        onClick={handleDecrypt}
+        disabled={isLoading}
+        className="w-full py-4 bg-emerald-600 text-white rounded-xl"
+      >
+        {isLoading ? "Descifrando..." : "🔓 Descifrar Documento"}
+      </button>
+
+      {/* DESCARGAR DOCUMENTO */}
+      {originalBuffer && (
+        <button
+          onClick={downloadOriginal}
+          className="w-full py-4 bg-purple-600 text-white rounded-xl"
+        >
+          📥 Descargar Documento Original
+        </button>
+      )}
     </div>
   )
 }

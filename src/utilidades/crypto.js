@@ -114,59 +114,78 @@ async function exportPrivateKeyToPEM(key) {
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  for (let i=0;i<bytes.byteLength;i++) binary += String.fromCharCode(bytes[i]);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
   return btoa(binary);
 }
 
-function base64ToArrayBuffer(b64) {
-  const binary = atob(b64);
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
   const len = binary.length;
   const bytes = new Uint8Array(len);
-  for (let i=0;i<len;i++) bytes[i] = binary.charCodeAt(i);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
   return bytes.buffer;
 }
 
 async function importRSAPublicKeyFromPEM(pem) {
-  // Limpia encabezados/footers PEM y saltos de línea
-  const cleanPem = pem
+   const clean = pem
     .replace("-----BEGIN PUBLIC KEY-----", "")
     .replace("-----END PUBLIC KEY-----", "")
-    .replace(/\s+/g, "");
+    .replace(/\s+/g, "")
 
-  // Convierte base64 a ArrayBuffer
-  const binaryDer = Uint8Array.from(atob(cleanPem), c => c.charCodeAt(0));
+  const binary = atob(clean)
+  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
 
-  return await window.crypto.subtle.importKey(
+  return crypto.subtle.importKey(
     "spki",
-    binaryDer,
+    bytes,
     {
       name: "RSA-OAEP",
-      hash: "SHA-256",
+      hash: "SHA-256"
     },
     true,
     ["encrypt"]
-  );
+  )
 }
 
 async function importRSAPrivateKeyFromPEM(pem) {
-  const clean = pem
+    const clean = pem
     .replace("-----BEGIN PRIVATE KEY-----", "")
     .replace("-----END PRIVATE KEY-----", "")
-    .replace(/\s+/g, "");
+    .replace(/\s+/g, "")
 
-  const binaryDer = Uint8Array.from(atob(clean), c => c.charCodeAt(0));
+  const binary = atob(clean)
+  const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
 
   return crypto.subtle.importKey(
     "pkcs8",
-    binaryDer,
+    bytes,
     {
       name: "RSA-OAEP",
       hash: "SHA-256"
     },
     true,
     ["decrypt"]
+  )
+}
+
+
+async function generateRSAKeyPair_alcaldia() {
+  return await crypto.subtle.generateKey(
+    {
+      name: "RSA-OAEP",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["encrypt", "decrypt"]
   );
 }
+
 
 
 export {
@@ -185,5 +204,6 @@ export {
   arrayBufferToBase64,
   base64ToArrayBuffer,
   importRSAPublicKeyFromPEM,
-  importRSAPrivateKeyFromPEM
+  importRSAPrivateKeyFromPEM,
+  generateRSAKeyPair_alcaldia
 };

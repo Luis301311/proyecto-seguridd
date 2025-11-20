@@ -1,26 +1,31 @@
 import {
-  decryptAESKeyWithRSA,
-  decryptWithAES,
-  base64ToArrayBuffer,
-  importPublicKeyFromPEM,
-  verifySignature
+decryptAESKeyWithRSA,
+decryptWithAES,
+base64ToArrayBuffer,
+importRSAPublicKeyFromPEM,
+verifySignature
 } from "./crypto";
 
-async function openPackage(packageJson, recipientPrivateRSAKey) {
-  const encryptedKey = base64ToArrayBuffer(packageJson.encryptedKey);
-  const iv = base64ToArrayBuffer(packageJson.iv);
-  const ciphertext = base64ToArrayBuffer(packageJson.ciphertext);
-  const signature = base64ToArrayBuffer(packageJson.signature);
+export async function openPackage(pkg, privateKeyReceiver) {
 
-  // 1. Descifra AES key
-  const aesKey = await decryptAESKeyWithRSA(recipientPrivateRSAKey, encryptedKey);
+  // 1. YA NO LEEMOS file.text()
+  // pkg YA ES JSON
 
-  // 2. Descifra documento
-  const plaintextBuffer = await decryptWithAES(aesKey, new Uint8Array(iv), ciphertext);
+  // 2. Convertir Base64 → ArrayBuffers
+  const iv = new Uint8Array(base64ToArrayBuffer(pkg.iv));
+  const encryptedAES = base64ToArrayBuffer(pkg.encryptedAES);
+  const encryptedFile = base64ToArrayBuffer(pkg.encryptedFile);
+  const signature = base64ToArrayBuffer(pkg.signature);
 
-  // 3. Importar public key del firmante (PEM -> CryptoKey) y verificar firma
-  const signerPubKey = await importPublicKeyFromPEM(packageJson.signerPublicKeyPem);
-  const isValid = await verifySignature(signerPubKey, plaintextBuffer, signature);
+  // 3. Descifrar clave AES
+  const aesKey = await decryptAESKeyWithRSA(privateKeyReceiver, encryptedAES);
 
-  return { plaintextBuffer, isValid };
+  // 4. Descifrar documento
+  const fileBuffer = await decryptWithAES(aesKey, iv, encryptedFile);
+
+  // 5. Verificar firma
+  const signerPubKey = await importRSAPublicKeyFromPEM(pkg.signerPublicKeyPem);
+  const valid = await verifySignature(signerPubKey, fileBuffer, signature);
+
+  return { fileBuffer, valid };
 }
